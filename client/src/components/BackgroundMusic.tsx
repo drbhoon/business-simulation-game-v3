@@ -39,7 +39,7 @@ const BackgroundMusic: React.FC = () => {
             audioRef.current.volume = 0.3; // Soft volume
             const playPromise = audioRef.current.play();
             if (playPromise !== undefined) {
-                playPromise.catch(error => {
+                playPromise.catch(() => {
                     // Auto-play prevented
                     console.log("Audio autoplay prevented. User interaction needed.");
                 });
