@@ -1,0 +1,12 @@
+{
+    "name": "business-simulation-game-root",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "build": "npm install --prefix client && npm run build --prefix client && npm install --prefix server && npm run build --prefix server",
+        "start": "node server/dist/scripts/initDb.js && node server/dist/index.js"
+    },
+    "engines": {
+        "node": "18.x"
+    }
+}
