@@ -28,7 +28,8 @@ if (process.env.NODE_ENV === 'production') {
     const clientDistPath = path.join(__dirname, '../../client/dist');
     app.use(express.static(clientDistPath));
 
-    app.get('*', (req, res) => {
+    // In Express 5 router, '*' is not valid. Must use regex-like capture or Splat
+    app.get(/(.*)/, (req, res) => {
         res.sendFile(path.join(clientDistPath, 'index.html'));
     });
 }
