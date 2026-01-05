@@ -120,7 +120,7 @@ export function handleGameEvents(io: Server, socket: Socket) {
 
         } catch (err: any) {
             console.error(err);
-            socket.emit('error_message', "Customer Allocation failed");
+            socket.emit('error_message', "Customer Allocation failed: " + err.message);
         }
     });
 

@@ -1,6 +1,6 @@
 import { query } from '../db';
 import { CONSTANTS, RMBid } from '../engine/types';
-import { calculateRMAllocations } from '../engine/allocations';
+import { calculateRMAllocations, calculateCustomerAllocations } from '../engine/allocations';
 
 export async function submitQuarterBid(teamId: number, quarterId: number, bidPricePaise: number, bidVolume: number, tmCount: number) {
     // Validate basics
@@ -147,7 +147,6 @@ export async function processCustomerAllocations(quarterId: number) {
         const customerDemand = Math.floor(totalMarket * share);
 
         // 4. Calculate
-        const { calculateCustomerAllocations } = require('../engine/allocations');
         const allocations = calculateCustomerAllocations(bids, customerDemand);
 
         // 5. Save
