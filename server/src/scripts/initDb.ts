@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS financials (
     prod_cost_paise INTEGER DEFAULT 0,
     expenses_paise INTEGER DEFAULT 0,
     ebitda_paise INTEGER DEFAULT 0,
+    receivables_paise INTEGER DEFAULT 0,
     
     cash_opening_paise INTEGER DEFAULT 0,
     cash_closing_paise INTEGER DEFAULT 0,
