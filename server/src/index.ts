@@ -8,6 +8,9 @@ import setupSocket from './socket';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
+console.log(`[Startup] NODE_ENV: ${process.env.NODE_ENV}`);
+console.log(`[Startup] CWD: ${process.cwd()}`);
+
 const app = express();
 app.use(cors());
 app.use(express.json());
