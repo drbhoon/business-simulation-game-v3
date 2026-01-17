@@ -86,7 +86,8 @@ const Lobby: React.FC = () => {
     // Use the latest team data from the 'teams' array if available
     const liveTeam = teams.find(t => t.id === registeredTeam?.id) || registeredTeam;
 
-    if (liveTeam && gameState && (gameState.phase !== 'LOBBY' || gameState.currentQuarter > 1)) {
+    // DIRECT TO DASHBOARD: Once registered, go to TeamDashboard which handles "LOBBY" phase by showing Rules.
+    if (liveTeam && gameState) {
         return <TeamDashboard team={liveTeam} gameState={gameState} />;
     }
 

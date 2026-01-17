@@ -44,123 +44,124 @@ export async function calculateMonthlyFinancials(quarterId: number, monthId: num
 
         // --- COSTS ---
 
-        // 1. RM Cost
-        // Get RM Allocation for this quarter (Assuming passed parameter month allocation logic needs to check if RM is monthly or quarterly)
-        // Currently RM is allocated once per Quarter (Start).
-        // Let's assume RM cost is paid in Month 1 of Quarter (Upfront).
-        // If monthId > 1, RM Cost might be 0 (unless we split it).
-        // For simple MVP Q1 M1: Charge full RM Cost now? Or 1/3?
-        // Let's charge FULL allocated RM cost in Month 1 since they buy it at start.
-        // 3. Production Cost
         const totalVol = wins.reduce((sum, w) => sum + w.allocated_volume, 0);
 
-        // --- COSTS REFINEMENT ---
-        // 1. RM Cost
-        // EBITDA View: Cost of Goods Sold (Consumption) = Sold Volume * RM Pice
-        // Checking for Spot Purchase (Excess Sales > Available RM)
-
+        // --- 1. RM COST WITH INVENTORY TRACKING ---
         let rmCostConsumedPaise = 0;
         let rmPurchaseCostPaise = 0;
-        let spotPurchaseCostPaise = 0;
+        let rmCarryingCostPaise = 0;
+        let rmOpeningBalance = 0;
+        let rmClosingBalance = 0;
+        let extraRmVolume = 0;
+        let extraRmCostPerM3Paise = 0;
 
-        // Fetch My RM Bid for Price and Volume
-        const { rows: rmBid } = await query(
-            `SELECT bid_price_paise, allocated_volume FROM rm_bids WHERE quarter_id = ? AND team_id = ?`,
-            [quarterId, teamId]
-        );
-
-        // Fetch Highest RM Bid Price for Spot Calculation
-        const { rows: maxBidRows } = await query(
-            `SELECT MAX(bid_price_paise) as max_price FROM rm_bids WHERE quarter_id = ?`,
-            [quarterId]
-        );
-        const maxRmBidPrice = maxBidRows[0]?.max_price || 5000 * 1000; // Default fallback if no bids
-
-        if (rmBid.length > 0) {
-            const myRmPrice = rmBid[0].bid_price_paise;
-            const myRmVol = rmBid[0].allocated_volume; // Total RM for Quarter
-
-            // Calculate Excess
-            // Note: This check only works effectively for 'Cumulative' sales if we track previous months.
-            // For M1, it's Total Vol M1 vs Total RM.
-            // Future TODO: Subtract previous months' consumption from myRmVol to get 'Available RM'.
-
-            let normalRmVol = totalVol;
-            let excessVol = 0;
-
-            if (totalVol > myRmVol) {
-                normalRmVol = myRmVol;
-                excessVol = totalVol - myRmVol;
+        // Get previous month's RM closing balance
+        if (monthId > 1 || quarterId > 1) {
+            let prevQuarter = quarterId;
+            let prevMonth = monthId - 1;
+            if (prevMonth < 1) {
+                prevMonth = 3;
+                prevQuarter = quarterId - 1;
             }
-
-            // Normal Consumption
-            rmCostConsumedPaise = normalRmVol * myRmPrice;
-
-            // Spot Purchase Penalty
-            if (excessVol > 0) {
-                const spotPrice = maxRmBidPrice * 1.10; // Highest + 10%
-                spotPurchaseCostPaise = excessVol * spotPrice;
-                rmCostConsumedPaise += spotPurchaseCostPaise; // Add to total RM Consumed Cost
+            if (prevQuarter >= 1) {
+                const { rows: prevFin } = await query(
+                    `SELECT rm_closing_balance FROM financials WHERE team_id = ? AND quarter_int = ? AND month_int = ?`,
+                    [teamId, prevQuarter, prevMonth]
+                );
+                rmOpeningBalance = prevFin[0]?.rm_closing_balance || 0;
             }
-
-            // Purchase Cost (for Cash) - Only if M1 (assuming bulk buy of Normal RM)
-            // Spot Purchase is immediate cash outflow too? Lets assume yes.
-            if (monthId === 1) {
-                rmPurchaseCostPaise = (myRmVol * myRmPrice) + spotPurchaseCostPaise;
-            } else {
-                rmPurchaseCostPaise = spotPurchaseCostPaise; // Only spot cost in later months if excess
-            }
-        } else {
-            // No RM allocated at all? Entire thing is Spot Purchase?
-            // Or maybe they didn't bid? Assume Spot for ALL volume.
-            const spotPrice = maxRmBidPrice * 1.10;
-            rmCostConsumedPaise = totalVol * spotPrice;
-            rmPurchaseCostPaise = rmCostConsumedPaise;
         }
 
-        // 2. TM Cost
-        const baseTmCost = team.base_tm_count * CONSTANTS.BASE_TM_COST_PAISE;
-        const tmCostPaise = baseTmCost;
+        // Fetch My RM Bid for Price and Volume (for THIS month)
+        const { rows: rmBid } = await query(
+            `SELECT bid_price_paise, allocated_volume FROM rm_bids WHERE quarter_id = ? AND month_id = ? AND team_id = ?`,
+            [quarterId, monthId, teamId]
+        );
 
-        // 3. Production Cost (Tiered)
+        // Fetch Highest RM Bid Price for Spot Calculation (for THIS month)
+        const { rows: maxBidRows } = await query(
+            `SELECT MAX(bid_price_paise) as max_price FROM rm_bids WHERE quarter_id = ? AND month_id = ?`,
+            [quarterId, monthId]
+        );
+        const maxRmBidPrice = maxBidRows[0]?.max_price || 5000 * 100; // Default fallback
+
+        const myRmPrice = rmBid.length > 0 ? rmBid[0].bid_price_paise : 0;
+        const myRmAllocated = rmBid.length > 0 ? rmBid[0].allocated_volume : 0;
+
+        // Total RM Available = Opening Balance + This Month's Allocation
+        const totalRmAvailable = rmOpeningBalance + myRmAllocated;
+
+        if (totalVol <= totalRmAvailable) {
+            // SCENARIO A: Sufficient RM (Surplus or Exact)
+            // Consume from available RM
+            rmCostConsumedPaise = totalVol * myRmPrice;
+
+            // Calculate surplus
+            const surplus = totalRmAvailable - totalVol;
+
+            if (surplus > 0) {
+                // Carrying cost = 10% of RM value
+                rmCarryingCostPaise = surplus * myRmPrice * 0.10;
+                rmClosingBalance = surplus;
+            } else {
+                rmClosingBalance = 0;
+            }
+
+            // Cash outflow = ONLY this month's purchase (NO carrying cost in cash)
+            rmPurchaseCostPaise = myRmAllocated * myRmPrice;
+
+        } else {
+            // SCENARIO B: Shortage - Need to buy extra at spot price
+            const shortage = totalVol - totalRmAvailable;
+
+            // Cost for available RM
+            rmCostConsumedPaise = totalRmAvailable * myRmPrice;
+
+            // Spot purchase at highest bid + 10%
+            const spotPrice = maxRmBidPrice * 1.10;
+            const spotCost = shortage * spotPrice;
+            rmCostConsumedPaise += spotCost;
+
+            // Cash outflow = This month's purchase + spot purchase
+            rmPurchaseCostPaise = (myRmAllocated * myRmPrice) + spotCost;
+
+            rmClosingBalance = 0; // All consumed
+
+            // Track extra RM for display
+            extraRmVolume = shortage;
+            extraRmCostPerM3Paise = Math.round(spotPrice);
+        }
+
+        // --- 2. TM COST WITH EXTRA TM LOGIC ---
+        const baseTmCount = team.base_tm_count;
+        const tmCapacityPerUnit = 540; // m³ per TM per month
+        const baseTmCapacity = baseTmCount * tmCapacityPerUnit;
+
+        let tmCostPaise = baseTmCount * CONSTANTS.BASE_TM_COST_PAISE; // Base TM cost
+        let extraTmCount = 0;
+
+        if (totalVol > baseTmCapacity) {
+            // Need extra TMs
+            const requiredTms = Math.ceil(totalVol / tmCapacityPerUnit);
+            extraTmCount = requiredTms - baseTmCount;
+            const extraTmCost = extraTmCount * 280000 * 100; // ₹280,000 per extra TM (in paise)
+            tmCostPaise += extraTmCost;
+        }
+
+        const currentTmCount = baseTmCount + extraTmCount;
+
+        // --- 3. PRODUCTION COST (Tiered) ---
         const tier = CONSTANTS.COST_TIERS.find(t => totalVol >= t.minVol);
         const prodRatePaise = tier ? tier.rate : 700 * 100;
         const prodCostPaise = totalVol * prodRatePaise;
 
-        // 4. Other Expenses
-        const expensesPaise = 500000 * 100;
-
-        // --- CALCULATION OF RM BALANCE ---
-        // Need cumulative sales for this quarter up to this month
-        // We know 'totalVol' is for THIS month.
-        // We need previous months' sales in this quarter if M > 1
-
-        // 1. Get allocated RM for quarter (Already fetched as myRmVol if rmBid exists)
-        const myRmVol = rmBid.length > 0 ? rmBid[0].allocated_volume : 0;
-
-        // 2. Get Cumulative Sold for Quarter (This M + Previous Ms)
-        // Since we are inside the 'calculate' function which is called for current month,
-        // we can query the 'customer_bids' table for allocated volume for this Quarter & Team
-        // for ALL months <= current monthId.
-
-        const { rows: cumSales } = await query(
-            `SELECT SUM(allocated_volume) as total_sold 
-             FROM customer_bids 
-             WHERE quarter_id = ? AND team_id = ? AND month_id <= ?`,
-            [quarterId, teamId, monthId]
-        );
-        const totalSoldToDate = cumSales[0]?.total_sold || 0;
-
-        // 3. Balance = Allocated - Sold
-        // If Sold > Allocated, Balance is Negative (Spot Purchase logic handled in cost, but display needs negative)
-        const rmClosingBalance = myRmVol - totalSoldToDate;
-
-        // --- TM COUNT ---
-        const currentTmCount = team.base_tm_count;
+        // --- 4. OTHER EXPENSES ---
+        const expensesPaise = 0; // No expenses defined
 
         // --- EBITDA ---
-        // Revenue - RM(Consumed incl Spot) - TM - Prod - Expenses
-        const totalCostsForEbitda = rmCostConsumedPaise + tmCostPaise + prodCostPaise + expensesPaise;
+        // Revenue - RM(Consumed + Carrying Cost) - TM - Prod - Expenses
+        const totalRmCostForEbitda = rmCostConsumedPaise + rmCarryingCostPaise;
+        const totalCostsForEbitda = totalRmCostForEbitda + tmCostPaise + prodCostPaise + expensesPaise;
         const ebitdaPaise = totalRevenuePaise - totalCostsForEbitda;
 
         // --- CASH FLOW ---
@@ -215,14 +216,16 @@ export async function calculateMonthlyFinancials(quarterId: number, monthId: num
             `INSERT INTO financials (
                 team_id, quarter_int, month_int,
                 revenue_paise, rm_cost_paise, tm_cost_paise, prod_cost_paise, expenses_paise, ebitda_paise,
-                cash_opening_paise, cash_closing_paise, receivables_paise,
-                rm_closing_balance, tm_count_current, interest_paid_paise
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                sales_volume, cash_opening_paise, cash_closing_paise, receivables_paise,
+                rm_opening_balance, rm_closing_balance, tm_count_current, interest_paid_paise,
+                extra_rm_volume, extra_rm_cost_per_m3_paise, extra_tm_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 teamId, quarterId, monthId,
-                totalRevenuePaise, rmCostConsumedPaise, tmCostPaise, prodCostPaise, expensesPaise, ebitdaPaise,
-                openingCashPaise, closingCashPaise, receivablesPaise,
-                rmClosingBalance, currentTmCount, interestPaise
+                totalRevenuePaise, totalRmCostForEbitda, tmCostPaise, prodCostPaise, expensesPaise, ebitdaPaise,
+                totalVol, openingCashPaise, closingCashPaise, receivablesPaise,
+                rmOpeningBalance, rmClosingBalance, currentTmCount, interestPaise,
+                extraRmVolume, extraRmCostPerM3Paise, extraTmCount
             ]
         );
 
@@ -277,12 +280,18 @@ export async function getCumulativeFinancials(teamId: number, quarterId: number)
 }
 
 export async function getAllTeamsFinancials(quarterId: number, monthId: number) {
-    // Get financials for this specific month for all teams
+    // Get financials for this specific month for all teams with ALL columns
     const { rows } = await query(
-        `SELECT f.team_id, t.name as team_name, f.ebitda_paise, f.revenue_paise, f.cash_closing_paise 
+        `SELECT f.team_id, t.name as team_name, 
+                f.revenue_paise, f.rm_cost_paise, f.tm_cost_paise, f.prod_cost_paise, 
+                f.expenses_paise, f.ebitda_paise, f.sales_volume,
+                f.cash_opening_paise, f.cash_closing_paise,
+                f.rm_opening_balance, f.rm_closing_balance, f.tm_count_current, 
+                f.receivables_paise, f.interest_paid_paise
          FROM financials f
          JOIN teams t ON f.team_id = t.id
-         WHERE f.quarter_int = ? AND f.month_int = ?`,
+         WHERE f.quarter_int = ? AND f.month_int = ?
+         ORDER BY t.id ASC`,
         [quarterId, monthId]
     );
     return rows;
@@ -327,9 +336,9 @@ export async function getAllTeamsCumulativeFinancials(quarterId: number) {
 export async function liquidateRemainingRM(quarterId: number) {
     console.log(`[Financials] Liquidating RM for Quarter ${quarterId}`);
 
-    // 1. Get Lowest RM Bid Price for Valuation
+    // 1. Get Lowest RM Bid Price for Valuation (from Month 3 bids)
     const { rows: minBidRows } = await query(
-        `SELECT MIN(bid_price_paise) as min_price FROM rm_bids WHERE quarter_id = ? AND allocated_volume > 0`,
+        `SELECT MIN(bid_price_paise) as min_price FROM rm_bids WHERE quarter_id = ? AND month_id = 3 AND allocated_volume > 0`,
         [quarterId]
     );
     const liquidationPricePaise = minBidRows[0]?.min_price || 0;
@@ -338,18 +347,14 @@ export async function liquidateRemainingRM(quarterId: number) {
     const { rows: teams } = await query(`SELECT id FROM teams`);
 
     for (const team of teams) {
-        // A. Total RM Allocated
+        // A. Total RM Allocated (Sum across all 3 months)
         const { rows: rmRes } = await query(
-            `SELECT allocated_volume FROM rm_bids WHERE quarter_id = ? AND team_id = ?`,
+            `SELECT SUM(allocated_volume) as total_allocated FROM rm_bids WHERE quarter_id = ? AND team_id = ?`,
             [quarterId, team.id]
         );
-        const totalAllocated = rmRes[0]?.allocated_volume || 0;
+        const totalAllocated = rmRes[0]?.total_allocated || 0;
 
-        // B. Total RM Consumed (Sum of all 3 months sales - minus any spot penalty logic?)
-        // To be precise, we need to sum up allocated_volume from *customer_bids* for M1, M2, M3
-        // BUT we need to clamp it to available RM if we were checking constraints.
-        // Assuming financials calculation already handled the consumption cost for EBITDA properly.
-        // We just need the Volume sold total.
+        // B. Total RM Consumed (Sum of all 3 months sales)
         const { rows: salesRes } = await query(
             `SELECT SUM(allocated_volume) as total_sold 
              FROM customer_bids 
@@ -385,4 +390,83 @@ export async function liquidateRemainingRM(quarterId: number) {
             );
         }
     }
+}
+
+export async function getTeamCompleteHistory(teamId: number) {
+    // 1. Fetch all financial records sorted by Q, M
+    const { rows: financialRecords } = await query(
+        `SELECT * FROM financials WHERE team_id = ? ORDER BY quarter_int, month_int`,
+        [teamId]
+    );
+
+    // 2. Fetch allocations (RM Bids) for each quarter and month
+    const { rows: rmBids } = await query(
+        `SELECT quarter_id, month_id, bid_price_paise, allocated_volume FROM rm_bids WHERE team_id = ?`,
+        [teamId]
+    );
+
+    // 3. Fetch Extra TMs
+    const { rows: extraTms } = await query(
+        `SELECT quarter_int, month_int, count FROM extra_tms WHERE team_id = ?`,
+        [teamId]
+    );
+
+    // 4. Fetch Sales Volume (Total Allocated Customer Volume per Month)
+    const { rows: customerSales } = await query(
+        `SELECT quarter_id, month_id, SUM(allocated_volume) as total_vol 
+         FROM customer_bids 
+         WHERE team_id = ? 
+         GROUP BY quarter_id, month_id`,
+        [teamId]
+    );
+
+    // 5. Merge Data
+    const history = financialRecords.map(rec => {
+        const qId = rec.quarter_int;
+        const mId = rec.month_int;
+
+        // Find RM Bid for this Quarter and Month
+        const rmBid = rmBids.find((r: any) => r.quarter_id === qId && r.month_id === mId);
+        const rmCostPerM3 = rmBid ? rmBid.bid_price_paise : 0;
+
+        // Find Sales Volume
+        const sale = customerSales.find((s: any) => s.quarter_id === qId && s.month_id === mId);
+        const salesVol = sale ? sale.total_vol : 0;
+
+        // Find Extra TM
+        const ext = extraTms.find((e: any) => e.quarter_int === qId && e.month_int === mId);
+        const extraTmCount = ext ? ext.count : 0;
+
+        // Calculate Totals Paid (Cash Outflow) for "Amount Paid" column
+        // Sum of all costs + interest + expenses
+        const amountPaidPaise = (rec.rm_cost_paise || 0) + (rec.tm_cost_paise || 0) + (rec.prod_cost_paise || 0) + (rec.expenses_paise || 0) + (rec.interest_paid_paise || 0);
+
+        return {
+            quarter: qId,
+            month: mId,
+
+            // Table 1 Data
+            salesVolume: salesVol,
+            revenuePaise: rec.revenue_paise,
+            rmCostPaise: rec.rm_cost_paise,
+            tmCostPaise: rec.tm_cost_paise,
+            prodCostPaise: rec.prod_cost_paise,
+            ebitdaPaise: rec.ebitda_paise,
+
+            // Table 2 Data - Extra RM & TM
+            extraRmVolume: rec.extra_rm_volume || 0,
+            extraRmCostPerM3: rec.extra_rm_cost_per_m3_paise || 0,
+            extraTmAdded: rec.extra_tm_count || 0,
+            extraTmCostPerM3: rec.extra_tm_count > 0 ? (280000 * 100) : 0, // ₹280,000 per extra TM
+
+            // Table 3 Data
+            openingCashPaise: rec.cash_opening_paise,
+            closingCashPaise: rec.cash_closing_paise,
+            loanTakenPaise: 0, // Placeholder
+            amountPaidPaise: amountPaidPaise,
+            paymentReceivedPaise: (rec.revenue_paise || 0) - (rec.receivables_paise || 0) // Roughly Cash Inflow from Sales
+        };
+    });
+
+    return history;
 }

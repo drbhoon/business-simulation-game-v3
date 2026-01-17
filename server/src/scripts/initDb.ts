@@ -32,17 +32,18 @@ CREATE TABLE IF NOT EXISTS game_state (
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- RM Bids
+-- RM Bids (V3: Monthly Bidding)
 CREATE TABLE IF NOT EXISTS rm_bids (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     quarter_id INTEGER NOT NULL,
+    month_id INTEGER NOT NULL,
     team_id INTEGER REFERENCES teams(id),
     bid_price_paise INTEGER NOT NULL,
     bid_volume INTEGER NOT NULL,
     rank INTEGER,
     allocated_volume INTEGER DEFAULT 0,
     is_locked INTEGER DEFAULT 0,
-    UNIQUE(quarter_id, team_id)
+    UNIQUE(quarter_id, month_id, team_id)
 );
 
 -- Extra TMs
@@ -83,14 +84,21 @@ CREATE TABLE IF NOT EXISTS financials (
     prod_cost_paise INTEGER DEFAULT 0,
     expenses_paise INTEGER DEFAULT 0,
     ebitda_paise INTEGER DEFAULT 0,
+    sales_volume INTEGER DEFAULT 0,
     receivables_paise INTEGER DEFAULT 0,
     
     cash_opening_paise INTEGER DEFAULT 0,
     cash_closing_paise INTEGER DEFAULT 0,
     loan_outstanding_paise INTEGER DEFAULT 0,
     interest_paid_paise INTEGER DEFAULT 0,
+    
+    rm_opening_balance INTEGER DEFAULT 0,
     rm_closing_balance INTEGER,
     tm_count_current INTEGER,
+    
+    extra_rm_volume INTEGER DEFAULT 0,
+    extra_rm_cost_per_m3_paise INTEGER DEFAULT 0,
+    extra_tm_count INTEGER DEFAULT 0,
     
     UNIQUE(team_id, quarter_int, month_int)
 );

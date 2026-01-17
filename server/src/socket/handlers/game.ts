@@ -4,6 +4,16 @@ import * as LobbyController from '../../controllers/lobbyController';
 
 export function handleGameEvents(io: Server, socket: Socket) {
 
+    // Helper to broadcast status
+    const broadcastTeamStatus = async (quarterId: number) => {
+        try {
+            const statusMap = await QuarterController.getTeamSubmissionStatus(quarterId);
+            io.emit('team_status_update', statusMap);
+        } catch (err) {
+            console.error("Failed to broadcast team status:", err);
+        }
+    };
+
     socket.on('submit_quarter_bid', async (data: {
         teamId: number,
         quarterId: number,
@@ -21,6 +31,7 @@ export function handleGameEvents(io: Server, socket: Socket) {
             );
 
             socket.emit('bid_success', { message: "Bid Submitted" });
+            broadcastTeamStatus(data.quarterId); // Broadcast update
 
             // Notify Controller if everyone is ready?
             const allReady = await QuarterController.hasAllTeamsBid(data.quarterId);
@@ -34,12 +45,20 @@ export function handleGameEvents(io: Server, socket: Socket) {
 
     socket.on('admin_process_allocations', async (data: { quarterId: number }) => {
         try {
+            // GUARD: Check Phase first
+            const currentState = await LobbyController.getGameState();
+            if (currentState.phase !== 'QUARTER_START') {
+                // Allow re-run if already in MONTH_START? No, that causes reset issues.
+                // Strictly enforce QUARTER_START.
+                throw new Error("Action blocked: Allocation phase (QUARTER_START) is required.");
+            }
+
             const results = await QuarterController.processQuarterAllocations(data.quarterId);
 
-            // Advance to Month 1 of the Quarter (if currently 0, move to 1. If 1, stay 1?)
-            // Usually this happens at Quarter Start.
-            // Let's assume we are moving to Q1 M1 if currently Q0.
-            await LobbyController.transitionToMonthStart(data.quarterId || 1, 1);
+            // FIX: Get current month from DB so we don't reset to 1 if we are in M2/M3
+            const currentMonth = currentState.currentMonthWithinQuarter || 1;
+
+            await LobbyController.transitionToMonthStart(data.quarterId || 1, currentMonth);
 
             io.emit('allocation_results', results);
 
@@ -51,9 +70,17 @@ export function handleGameEvents(io: Server, socket: Socket) {
             const updatedTeams = await LobbyController.getTeams();
             io.emit('teams_update', updatedTeams);
 
+            broadcastTeamStatus(data.quarterId); // Broadcast update (resets for next phase if month changed logic was tricky, but status checks DB)
+
         } catch (err: any) {
             socket.emit('error_message', "Allocation failed");
         }
+    });
+
+    // ... inside admin_set_phase or others?
+    // Let's also add it to get_initial_state or request
+    socket.on('get_team_status', async (data: { quarterId: number }) => {
+        await broadcastTeamStatus(data.quarterId);
     });
 
     socket.on('get_allocations', async (data: { quarterId: number }) => {
@@ -91,6 +118,7 @@ export function handleGameEvents(io: Server, socket: Socket) {
                 );
             }
             socket.emit('bid_success', { message: "Auction Bids Recorded" });
+            broadcastTeamStatus(data.quarterId); // Broadcast update
         } catch (err: any) {
             socket.emit('error_message', "Bid submission failed: " + err.message);
         }
@@ -206,6 +234,15 @@ export function handleGameEvents(io: Server, socket: Socket) {
 
             // Notify teams to refresh
             io.emit('financials_updated');
+
+            // FIX: Also send results to Controller immediately
+            const { getAllTeamsFinancials, getAllTeamsCumulativeFinancials } = require('../../controllers/financialsController');
+            const results = await getAllTeamsFinancials(data.quarterId, currentMonth);
+            const leaderboard = await getAllTeamsCumulativeFinancials(data.quarterId);
+
+            socket.emit('all_month_financials_results', results);
+            socket.emit('leaderboard_results', leaderboard);
+
         } catch (err: any) {
             socket.emit('error_message', "Recalculation failed: " + err.message);
         }
@@ -217,9 +254,12 @@ export function handleGameEvents(io: Server, socket: Socket) {
             const currentMonth = gs.currentMonthWithinQuarter || 1;
             const currentQuarter = gs.currentQuarter || 1;
 
+            console.log(`[Admin] BEFORE ADVANCE: Q${currentQuarter} M${currentMonth} | Phase: ${gs.phase}`);
+
             let nextMonth = currentMonth + 1;
             let nextQuarter = currentQuarter;
-            let nextPhase = 'CUSTOMER_AUCTION_PREROLL'; // Default flow same quarter
+            // V3: Monthly RM/TM Bidding - Always go back to LOBBY for new month bidding
+            let nextPhase = 'LOBBY';
 
             if (nextMonth > 3) {
                 console.log(`[Admin] Quarter ${currentQuarter} Ended. Transitioning to Quarter ${currentQuarter + 1}`);
@@ -234,18 +274,26 @@ export function handleGameEvents(io: Server, socket: Socket) {
                 nextPhase = 'LOBBY'; // Reset to LOBBY for RM Bidding
             }
 
-            console.log(`[Admin] Advancing to Q${nextQuarter} M${nextMonth} | Phase: ${nextPhase}`);
+            console.log(`[Admin] ADVANCING TO: Q${nextQuarter} M${nextMonth} | Phase: ${nextPhase}`);
 
             await query(
                 `UPDATE game_state SET current_quarter = ?, current_month_within_quarter = ?, phase = ? WHERE id=1`,
                 [nextQuarter, nextMonth, nextPhase]
             );
 
+            // Verify the update
+            const verifyState = await LobbyController.getGameState();
+            console.log(`[Admin] AFTER UPDATE: Q${verifyState.currentQuarter} M${verifyState.currentMonthWithinQuarter} | Phase: ${verifyState.phase}`);
+
+            // FIX: Broadcast new state to ALL clients
+            io.emit('game_state_update', verifyState);
+
             // If new quarter, we might want to clear old bids or just rely on QID separation?
             // Tables (rm_bids, etc) use quarter_id, so strict separation exists.
 
             const newState = await LobbyController.getGameState();
             io.emit('game_state_update', newState);
+            console.log(`[Admin] Emitted game_state_update:`, newState);
         } catch (err: any) {
             console.error(err);
             socket.emit('error_message', "Advance Month failed: " + err.message);
@@ -262,6 +310,16 @@ export function handleGameEvents(io: Server, socket: Socket) {
             socket.emit('error_message', "Failed to end game: " + err.message);
         }
     });
+    socket.on('get_team_history', async (data: { teamId: number }) => {
+        try {
+            const { getTeamCompleteHistory } = require('../../controllers/financialsController');
+            const history = await getTeamCompleteHistory(data.teamId);
+            socket.emit('team_history_results', history);
+        } catch (err: any) {
+            console.error(err);
+        }
+    });
+
 }
 
 const { query } = require('../../db'); // Import query helper locally if needed or use existing
