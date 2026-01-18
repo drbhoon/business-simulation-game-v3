@@ -722,7 +722,7 @@ const GameRulesInfo = ({ teamName }: { teamName: string }) => {
     return (
         <div className="max-w-4xl mx-auto space-y-8 pb-10">
             <div className="bg-gray-800 p-6 rounded-lg border border-yellow-500/50 shadow-2xl text-center">
-                <h1 className="text-3xl font-bold text-yellow-400 mb-2">Welcome, {teamName}!</h1>
+                <h1 className="text-3xl font-bold text-yellow-400 mb-2">HI {teamName}! Dr. Bhoon Welcomes You to this Exciting Game</h1>
                 <p className="text-gray-300">Please read the following information carefully before the game starts.</p>
             </div>
 
