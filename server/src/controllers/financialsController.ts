@@ -306,7 +306,9 @@ export async function getTeamFinancials(teamId: number, quarterId: number, month
 }
 
 export async function getAllTeamsCumulativeFinancials(quarterId: number) {
+    console.log(`[Financials] getAllTeamsCumulativeFinancials called for Q${quarterId}`);
     const { rows: teams } = await query(`SELECT id, name FROM teams`);
+    console.log(`[Financials] Found ${teams.length} teams`);
     const results = [];
 
     for (const team of teams) {
