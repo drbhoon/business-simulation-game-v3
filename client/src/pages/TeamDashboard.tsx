@@ -551,9 +551,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
                         <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700">
                             <h2 className="text-2xl font-bold mb-6 text-gray-200 border-b border-gray-700 pb-2 flex justify-between items-center">
                                 <span>📊 Financial Reports</span>
-                                <button onClick={() => socket?.emit('get_team_history', { teamId: team.id })} className="text-sm bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-white">Refresh Reports</button>
+                                <button onClick={() => {
+                                    socket?.emit('get_team_history', { teamId: team.id });
+                                    socket?.emit('get_leaderboard', { quarterId: gameState.currentQuarter || 1 });
+                                }} className="text-sm bg-blue-600 hover:bg-blue-500 px-3 py-1 rounded text-white">
+                                    Refresh Reports & Rankings
+                                </button>
                             </h2>
-
+                            {/* ... (Report Tables) ... */}
                             {/* Table A: Monthly Performance */}
                             <div className="mb-8">
                                 <h3 className="text-lg font-bold text-yellow-500 mb-3">Monthly Performance</h3>
@@ -605,8 +610,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
                                             })}
                                         </tbody>
                                     </table>
-                                </div>
-                            </div>
+                                </div >
+                            </div >
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                 {/* Table B: RM & TM Cost Tracking */}
@@ -720,16 +725,14 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
                                     </table>
                                 </div>
                             </div>
-                        </div>
+                        </div >
                     )}
 
                     {/* NEW: Competition Leaderboard */}
-                    {leaderboardData && leaderboardData.length > 0 && (
-                        <LeaderboardTable data={leaderboardData} myTeamId={team.id} />
-                    )}
-                </div>
-            </div>
-        </div>
+                    <LeaderboardTable data={leaderboardData} myTeamId={team.id} />
+                </div >
+            </div >
+        </div >
     );
 };
 
@@ -861,7 +864,18 @@ const GameRulesInfo = ({ teamName }: { teamName: string }) => {
 };
 
 const LeaderboardTable = ({ data, myTeamId }: { data: any[], myTeamId: number }) => {
-    if (!data || data.length === 0) return null;
+    if (!data || data.length === 0) {
+        return (
+            <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 mt-8 opacity-75">
+                <h2 className="text-xl font-bold mb-4 text-yellow-500 flex items-center gap-2">
+                    <span>🏆</span> Competition Leaderboard
+                </h2>
+                <div className="text-gray-400 text-sm italic py-4 text-center">
+                    Waiting for rankings... (Data will appear after Month 1)
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 mt-8">
