@@ -104,8 +104,6 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
         const fetchM1 = () => {
             socket.emit('get_my_financials', { teamId: team.id, quarterId: gameState.currentQuarter || 1 });
             socket.emit('get_customer_allocations', { quarterId: gameState.currentQuarter || 1 });
-            // Fetch Leaderboard
-            socket.emit('get_leaderboard', { quarterId: gameState.currentQuarter || 1 });
         };
         fetchM1();
 
@@ -128,13 +126,18 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
         if (!socket || !team.id) return;
         const fetchStats = () => {
             socket.emit('get_cumulative_financials', { teamId: team.id, quarterId: gameState.currentQuarter || 1 });
+            // Fetch Leaderboard (Valid in all phases)
+            socket.emit('get_leaderboard', { quarterId: gameState.currentQuarter || 1 });
         };
         fetchStats();
         const interval = setInterval(fetchStats, 5000);
         socket.on('my_cumulative_financials', (data) => setCumulativeStats(data));
+        // Also listen for updates
+        socket.on('financials_updated', fetchStats);
         return () => {
             clearInterval(interval);
             socket.off('my_cumulative_financials');
+            socket.off('financials_updated', fetchStats);
         };
     }, [socket, team.id, gameState.currentQuarter]);
 
