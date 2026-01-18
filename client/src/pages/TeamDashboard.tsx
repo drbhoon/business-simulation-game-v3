@@ -40,6 +40,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
 
     // 6. Full History State
     const [history, setHistory] = useState<any[] | null>(null);
+    // 7. Leaderboard State
+    const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
 
     // --- EFFECTS ---
 
@@ -59,11 +61,16 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
         socket.on('team_history_results', (data: any[]) => {
             setHistory(data);
         });
+        // Leaderboard listener
+        socket.on('leaderboard_results', (data: any[]) => {
+            setLeaderboardData(data);
+        });
 
         return () => {
             socket.off('bid_success');
             socket.off('error_message');
             socket.off('team_history_results');
+            socket.off('leaderboard_results');
         };
     }, [socket]);
 
@@ -97,6 +104,8 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
         const fetchM1 = () => {
             socket.emit('get_my_financials', { teamId: team.id, quarterId: gameState.currentQuarter || 1 });
             socket.emit('get_customer_allocations', { quarterId: gameState.currentQuarter || 1 });
+            // Fetch Leaderboard
+            socket.emit('get_leaderboard', { quarterId: gameState.currentQuarter || 1 });
         };
         fetchM1();
 
@@ -710,6 +719,11 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
                             </div>
                         </div>
                     )}
+
+                    {/* NEW: Competition Leaderboard */}
+                    {leaderboardData && leaderboardData.length > 0 && (
+                        <LeaderboardTable data={leaderboardData} myTeamId={team.id} />
+                    )}
                 </div>
             </div>
         </div>
@@ -838,6 +852,46 @@ const GameRulesInfo = ({ teamName }: { teamName: string }) => {
 
             <div className="text-center text-gray-500 text-xs mt-8">
                 Waiting for Admin to Start Game...
+            </div>
+        </div>
+    );
+};
+
+const LeaderboardTable = ({ data, myTeamId }: { data: any[], myTeamId: number }) => {
+    if (!data || data.length === 0) return null;
+
+    return (
+        <div className="bg-gray-800 rounded-lg p-6 shadow-xl border border-gray-700 mt-8">
+            <h2 className="text-xl font-bold mb-4 text-yellow-500 flex items-center gap-2">
+                <span>🏆</span> Competition Leaderboard
+            </h2>
+            <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-gray-300">
+                    <thead className="bg-gray-700/50 text-xs uppercase font-bold text-gray-400">
+                        <tr>
+                            <th className="p-3">Rank</th>
+                            <th className="p-3">Team</th>
+                            <th className="p-3 text-right">Total Game EBITDA</th>
+                            <th className="p-3 text-right">Current Q EBITDA</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700">
+                        {data.map((row, i) => (
+                            <tr key={i} className={`hover:bg-gray-700/30 transition-colors ${row.teamId === myTeamId ? 'bg-blue-900/30 border-l-4 border-blue-500' : ''}`}>
+                                <td className="p-3 font-bold text-white">#{i + 1}</td>
+                                <td className="p-3 font-bold text-white">
+                                    {row.teamName}
+                                </td>
+                                <td className={`p-3 text-right font-bold ${row.totalGameEbitdaPaise >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    ₹{(row.totalGameEbitdaPaise / 100).toLocaleString()}
+                                </td>
+                                <td className="p-3 text-right text-gray-400">
+                                    ₹{(row.quarterEbitdaPaise / 100).toLocaleString()}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
             </div>
         </div>
     );

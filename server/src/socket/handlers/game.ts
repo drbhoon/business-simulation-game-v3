@@ -221,6 +221,17 @@ export function handleGameEvents(io: Server, socket: Socket) {
         }
     });
 
+    socket.on('get_leaderboard', async (data: { quarterId: number }) => {
+        try {
+            const { getAllTeamsCumulativeFinancials } = require('../../controllers/financialsController');
+            const leaderboard = await getAllTeamsCumulativeFinancials(data.quarterId);
+            socket.emit('leaderboard_results', leaderboard);
+        } catch (err: any) {
+            console.error("[Socket] Error fetching leaderboard:", err);
+            socket.emit('error_message', "Failed to fetch leaderboard");
+        }
+    });
+
     // --- Month End / Next Month Handlers ---
 
     socket.on('admin_recalculate_financials', async (data: { quarterId: number }) => {
