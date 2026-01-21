@@ -32,7 +32,13 @@ export function handleLobbyEvents(io: Server, socket: Socket) {
                 const teams = await LobbyController.getTeams();
                 io.emit('teams_update', teams);
             } catch (err: any) {
-                // If unique constraint violation, try LOGIN
+                // 1. Check for specific Game Full error
+                if (err.message === "Game is Full Now. Contact Controller") {
+                    socket.emit('error_message', err.message);
+                    return;
+                }
+
+                // 2. If unique constraint violation or "Team Name Exists", try LOGIN
                 const existingTeam = await LobbyController.loginTeam(data.name, data.pin);
                 if (existingTeam) {
                     // Success Login

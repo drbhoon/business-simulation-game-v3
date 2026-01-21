@@ -2,7 +2,31 @@ import { query } from '../db';
 import { Team, GameState } from '../engine/types';
 
 export async function createTeam(name: string, pinCode: string): Promise<Team> {
-    // 1. Insert
+    // 0. Check capacity
+    const { rows: countRes } = await query('SELECT COUNT(*) as count FROM teams');
+    const currentCount = countRes[0]?.count || 0;
+
+    // 1. Insert (only if < 10 or if unique check fails later)
+    // Actually, we must check duplicate name first? 
+    // If we check duplicate name first, we allow re-login flow to pass to 'catch'.
+    // If we check capacity first, we block NEW teams, but we might also block re-login flow 
+    // if we throw strictly.
+    // However, re-login relies on createTeam failing.
+    
+    // Strategy: We want to ALLOW duplicate-name error to happen (so re-login works),
+    // but BLOCK non-duplicate new team if full.
+    
+    // Let's check if name exists.
+    const { rows: exists } = await query('SELECT id FROM teams WHERE name = ?', [name]);
+    if (exists.length > 0) {
+        // Name exists, let it fail unique constraint (or throw specific error to catch)
+        throw new Error("Team Name Exists"); 
+    }
+
+    if (currentCount >= 10) {
+        throw new Error("Game is Full Now. Contact Controller");
+    }
+
     await query(
         'INSERT INTO teams (name, pin_code, base_tm_count) VALUES (?, ?, 0)',
         [name, pinCode]
