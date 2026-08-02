@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+node_modules
+client/node_modules
+client/dist
+server/node_modules
+server/dist
+*.db
+*.log
+.vscode
+.DS_Store
+Thumbs.db
+start_game.bat

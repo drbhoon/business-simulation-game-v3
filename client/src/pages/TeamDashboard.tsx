@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
+import { withBase } from '../basePath';
 
 interface TeamDashboardProps {
     team: { id: number; name: string; baseTmCount: number };
@@ -216,7 +217,7 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({ team, gameState }) => {
             return (
                 <div className="p-6 bg-gray-800 text-white rounded-lg shadow-xl max-w-2xl mx-auto mt-10 font-sans">
                     <div className="flex justify-center mb-6">
-                        <img src="/rdc_logo.png" alt="RDC Logo" className="h-20 object-contain" />
+                        <img src={withBase("/rdc_logo.png")} alt="RDC Logo" className="h-20 object-contain" />
                     </div>
                     <h2 className="text-3xl font-bold mb-6 text-blue-400 text-center">
                         Q{Math.max(gameState.currentQuarter, 1)} M{gameState.currentMonthWithinQuarter || 1} Planning

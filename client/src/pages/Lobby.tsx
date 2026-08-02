@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
 import TeamDashboard from './TeamDashboard';
+import { withBase } from '../basePath';
 
 interface Team {
     id: number;
@@ -161,7 +162,7 @@ const Lobby: React.FC = () => {
                 </div>
             </div>
             <div className="text-center mt-12 text-gray-600 text-xs">
-                Admin? Go to <a href="/controller" className="underline hover:text-gray-400">/controller</a>
+                Admin? Go to <a href={withBase("/controller")} className="underline hover:text-gray-400">/controller</a>
             </div>
         </div>
     );

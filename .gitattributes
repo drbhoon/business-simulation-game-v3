@@ -1,0 +1,7 @@
+# Developed on Windows, built and run on Linux. CRLF breaks shell scripts and
+# Dockerfiles, so normalise to LF.
+* text=auto eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.db binary

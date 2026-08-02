@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
+import { withBase } from '../basePath';
 
 // Types
 interface Team {
@@ -211,7 +212,7 @@ const ControllerDashboard: React.FC = () => {
         <div className="p-6 bg-gray-900 text-white min-h-screen font-sans">
             {/* Header with Logo */}
             <div className="flex flex-col items-center mb-8 border-b border-gray-700 pb-4">
-                <img src="/rdc_logo.png" alt="RDC Logo" className="h-20 mb-4 object-contain" />
+                <img src={withBase("/rdc_logo.png")} alt="RDC Logo" className="h-20 mb-4 object-contain" />
                 <div className="flex justify-between items-center w-full">
                     <h1 className="text-3xl font-bold text-purple-400">Admin Controller</h1>
                     <div className="flex gap-4">
