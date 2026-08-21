@@ -1,6 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import * as LobbyController from '../../controllers/lobbyController';
 
+const adminPassword = () => process.env.StartGamePassword || 'admin123';
+
 export function handleLobbyEvents(io: Server, socket: Socket) {
     // Join Lobby (General Room)
     socket.join('lobby');
@@ -17,9 +19,29 @@ export function handleLobbyEvents(io: Server, socket: Socket) {
         }
     });
 
-    // Register / Join Team
-    socket.on('register_team', async (data: { name: string, pin: string }) => {
+    // Does this player's link still belong to the game that is running?
+    // Asked by the join screen so a stale link says so up front, instead of
+    // letting somebody fill the form and be refused afterwards.
+    socket.on('check_join_code', async (code: string) => {
         try {
+            socket.emit('join_code_status', { valid: await LobbyController.joinCodeMatches(code) });
+        } catch (err) {
+            console.error(err);
+            socket.emit('join_code_status', { valid: false });
+        }
+    });
+
+    // Register / Join Team
+    socket.on('register_team', async (data: { name: string, pin: string, code?: string }) => {
+        try {
+            // The real gate. check_join_code above is for the screen; a client
+            // can skip it, so the code is verified again where it counts.
+            if (!await LobbyController.joinCodeMatches(data.code)) {
+                socket.emit('invalid_join_code');
+                socket.emit('error_message',
+                    'This game link is no longer valid. Please ask your controller for the current link.');
+                return;
+            }
             const gameState = await LobbyController.getGameState();
             // Allow joining even if game started if it's a re-login
 
@@ -85,9 +107,25 @@ export function handleLobbyEvents(io: Server, socket: Socket) {
         }
     });
 
-    // Admin: Reset Game
+    // Admin: the link to hand to players for the game running now.
+    // Controller-only — it is emitted to the asking socket, never broadcast,
+    // so it does not travel to every connected player.
+    socket.on('admin_get_join_link', async (password: string) => {
+        if (password !== adminPassword()) {
+            socket.emit('error_message', 'Invalid admin password');
+            return;
+        }
+        try {
+            socket.emit('join_link', { code: await LobbyController.getJoinCode() });
+        } catch (err) {
+            console.error(err);
+            socket.emit('error_message', 'Could not read the game link.');
+        }
+    });
+
+    // Admin: Reset Game — ends this game, starts a clean one on a NEW link.
     socket.on('admin_reset_game', async (password: string) => {
-        if (password !== (process.env.StartGamePassword || 'admin123')) {
+        if (password !== adminPassword()) {
             socket.emit('error_message', 'Invalid admin password');
             return;
         }
@@ -101,6 +139,10 @@ export function handleLobbyEvents(io: Server, socket: Socket) {
             // Send empty teams list
             const teams = await LobbyController.getTeams();
             io.emit('teams_update', teams);
+
+            // Only back to the controller: the players on the old link are
+            // meant to lose access, so they must not be told the new code.
+            socket.emit('join_link', { code: await LobbyController.getJoinCode() });
         } catch (err) {
             console.error(err);
         }

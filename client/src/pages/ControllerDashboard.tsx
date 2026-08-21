@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
-import { withBase } from '../basePath';
+import { withBase, playerJoinUrl } from '../basePath';
 
 // Types
 interface Team {
@@ -31,11 +31,22 @@ const ControllerDashboard: React.FC = () => {
     const [teamStatuses, setTeamStatuses] = useState<Record<number, { hasBidRM: boolean, hasBidAuction: boolean }>>({});
     const [msg, setMsg] = useState('');
 
+    // The link players use for THIS game. Issued by the server, rotated on
+    // every reset, and asked for only once the controller is authenticated.
+    const [joinCode, setJoinCode] = useState('');
+    const [copied, setCopied] = useState(false);
+
     useEffect(() => {
         if (!socket) return;
         if (!isAuthenticated) return;
 
         socket.emit('get_initial_state');
+        socket.emit('admin_get_join_link', 'admin123');
+
+        socket.on('join_link', ({ code }: { code: string }) => {
+            setJoinCode(code);
+            setCopied(false);
+        });
 
         socket.on('game_state_update', (st) => {
             setGameState(st);
@@ -87,6 +98,7 @@ const ControllerDashboard: React.FC = () => {
         });
 
         return () => {
+            socket.off('join_link');
             socket.off('game_state_update');
             socket.off('teams_update');
             socket.off('team_status_update');
@@ -167,11 +179,30 @@ const ControllerDashboard: React.FC = () => {
         if (socket) socket.emit('admin_set_phase', { phase: 'QUARTER_START', password: 'admin123' });
     };
 
+    // Reset IS "new game, new link" — the server rotates the code as part of
+    // it and sends the new one back, so there is nothing else to press.
     const resetGame = () => {
-        if (socket) {
-            socket.emit('admin_reset_game', 'admin123');
-            setAllocations([]);
-            setMsg('Game Reset');
+        if (!socket) return;
+        if (!window.confirm(
+            'Start a new game?\n\nThis erases the current teams, bids and results, and issues a NEW player link. '
+            + 'The link you shared for this game will stop working.'
+        )) return;
+        socket.emit('admin_reset_game', 'admin123');
+        setAllocations([]);
+        setMsg('New game started — share the new player link below.');
+    };
+
+    const copyPlayerLink = async () => {
+        if (!joinCode) return;
+        try {
+            await navigator.clipboard.writeText(playerJoinUrl(joinCode));
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2500);
+        } catch {
+            // Clipboard access can be refused by the browser. The link is in a
+            // selectable field either way, so say what to do instead of failing
+            // silently.
+            setMsg('Could not copy automatically — select the link below and copy it.');
         }
     };
 
@@ -270,6 +301,37 @@ const ControllerDashboard: React.FC = () => {
                             {msg}
                         </div>
                     )}
+
+                    {/* Player link for the game running now */}
+                    <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
+                        <h3 className="text-xl font-bold mb-1 text-gray-200">Player Link</h3>
+                        <p className="text-xs text-gray-400 mb-4">
+                            Share this with the teams. It works until you start a new game.
+                        </p>
+
+                        {joinCode ? (
+                            <>
+                                <div className="text-center mb-3">
+                                    <div className="text-xs text-gray-500 uppercase tracking-wider">Game Code</div>
+                                    <div className="text-3xl font-black tracking-[0.3em] text-purple-300">{joinCode}</div>
+                                </div>
+                                <input
+                                    readOnly
+                                    onFocus={e => e.currentTarget.select()}
+                                    value={playerJoinUrl(joinCode)}
+                                    className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-xs text-gray-300 font-mono"
+                                />
+                                <button
+                                    onClick={copyPlayerLink}
+                                    className="w-full mt-3 bg-green-700 hover:bg-green-600 text-white font-bold py-2 rounded"
+                                >
+                                    {copied ? 'Copied ✓' : 'Copy Player Link'}
+                                </button>
+                            </>
+                        ) : (
+                            <p className="text-gray-500 text-sm italic">Loading link…</p>
+                        )}
+                    </div>
 
                     {/* Game Controls */}
                     <div className="bg-gray-800 p-6 rounded-lg border border-gray-700">
@@ -392,9 +454,10 @@ const ControllerDashboard: React.FC = () => {
 
                             <button
                                 onClick={resetGame}
+                                title="Erases teams, bids and results, and issues a new player link. The current link stops working."
                                 className="w-full bg-red-900/40 hover:bg-red-900 text-red-300 font-bold py-2 rounded border border-red-800 text-sm"
                             >
-                                Reset Entire Game
+                                Start New Game (new player link)
                             </button>
                         </div>
                     </div>

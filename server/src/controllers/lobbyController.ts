@@ -1,5 +1,57 @@
+import { randomInt } from 'crypto';
 import { query } from '../db';
 import { Team, GameState } from '../engine/types';
+
+/**
+ * The join code that turns the fixed player URL into a per-game link.
+ *
+ * Players used to be given one permanent address, so a link from a session
+ * three months ago still walked straight into today's game. The code is a
+ * property of the GAME: every reset issues a new one, which is what makes the
+ * previous link stop working.
+ *
+ * It is a share token, not a password. It stops a stale link and a wrong room
+ * from joining; it is not protection against someone who is given the current
+ * code and should not have it.
+ */
+// No O/0 or I/1 — the controller reads this out to a room.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+export function newJoinCode(length = 6): string {
+    let code = '';
+    for (let i = 0; i < length; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+    return code;
+}
+
+/** Issue a fresh code, retiring the current one. */
+export async function rotateJoinCode(): Promise<string> {
+    const code = newJoinCode();
+    await query(
+        'UPDATE game_state SET join_code = ?, last_updated = datetime("now") WHERE id = 1',
+        [code]
+    );
+    return code;
+}
+
+/**
+ * The code for the game running now, minting one if the row has none.
+ *
+ * A database that existed before this feature has join_code NULL, and so does
+ * one whose migration has not run yet. Either way the controller must be able
+ * to hand out a link, so the first read creates it rather than failing.
+ */
+export async function getJoinCode(): Promise<string> {
+    const result = await query('SELECT join_code as "joinCode" FROM game_state WHERE id = 1');
+    const existing = (result.rows[0]?.joinCode || '').trim();
+    return existing || await rotateJoinCode();
+}
+
+/** Case- and space-insensitive: the code gets typed in by hand. */
+export async function joinCodeMatches(candidate: string | undefined | null): Promise<boolean> {
+    const given = (candidate || '').trim().toUpperCase();
+    if (!given) return false;
+    return given === (await getJoinCode()).toUpperCase();
+}
 
 export async function createTeam(name: string, pinCode: string): Promise<Team> {
     // 0. Check capacity
@@ -84,6 +136,13 @@ export async function loginTeam(name: string, pinCode: string): Promise<Team | n
     return result.rows[0] || null;
 }
 
+/**
+ * End the current game and start a clean one.
+ *
+ * Rotating the code is part of the reset, not a separate button: a new game
+ * IS a new link, and leaving the old one alive would let a team from the
+ * finished session rejoin the next one.
+ */
 export async function resetGame(): Promise<GameState> {
     // 1. Clear Bids (RM, Auction, etc.) and Financials
     await query('DELETE FROM rm_bids');
@@ -94,14 +153,16 @@ export async function resetGame(): Promise<GameState> {
     // 2. Clear Teams
     await query('DELETE FROM teams');
 
-    // 3. Reset Game State to Lobby, Quarter 0
+    // 3. Reset Game State to Lobby, Quarter 0, on a NEW link
     await query(
-        `UPDATE game_state 
-         SET phase = 'LOBBY', 
-             current_quarter = 0, 
+        `UPDATE game_state
+         SET phase = 'LOBBY',
+             current_quarter = 0,
              current_month_within_quarter = 0,
-             last_updated = datetime("now") 
-         WHERE id = 1`
+             join_code = ?,
+             last_updated = datetime("now")
+         WHERE id = 1`,
+        [newJoinCode()]
     );
 
     return await getGameState();

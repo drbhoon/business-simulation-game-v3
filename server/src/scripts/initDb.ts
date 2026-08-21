@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { query, getClient } from '../db';
+import { getJoinCode } from '../controllers/lobbyController';
 
 async function initDb() {
     console.log('Initializing Database...');
@@ -120,6 +121,20 @@ INSERT OR IGNORE INTO game_state (id, current_quarter, phase) VALUES (1, 0, 'LOB
         await client.query('BEGIN');
         await client.query(schemaSql);
         await client.query('COMMIT');
+
+        // Per-game join code. CREATE TABLE IF NOT EXISTS leaves an existing
+        // game_state untouched, so the column has to be added separately.
+        // SQLite has no ADD COLUMN IF NOT EXISTS; re-running is what makes
+        // this idempotent, so the second attempt is expected to complain.
+        try {
+            await query('ALTER TABLE game_state ADD COLUMN join_code TEXT');
+            console.log('[DB] added game_state.join_code');
+        } catch (err: any) {
+            if (!/duplicate column name/i.test(err?.message || '')) throw err;
+        }
+        // Mints one if the row has none, so the controller always has a link
+        // to hand out — including on the very first boot after this deploy.
+        console.log(`[DB] player join code for the current game: ${await getJoinCode()}`);
 
         console.log('Database initialized successfully.');
     } catch (err) {

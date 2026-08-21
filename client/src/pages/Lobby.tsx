@@ -1,7 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
 import TeamDashboard from './TeamDashboard';
-import { withBase } from '../basePath';
+import { withBase, readJoinCode } from '../basePath';
+
+/**
+ * Players reach a game through a link the controller issues, not through a
+ * fixed address. The code rides in ?g=, and is kept in sessionStorage so a
+ * reload — or a phone waking up mid-game — does not drop them out.
+ *
+ * sessionStorage rather than localStorage on purpose: it dies with the tab,
+ * so a shared training laptop does not carry one group's code into the next
+ * session.
+ */
+const CODE_STORAGE_KEY = 'rmx_join_code';
+
+const codeFromUrl = (): string => {
+    const fromQuery = new URLSearchParams(window.location.search).get('g');
+    if (fromQuery) return fromQuery.trim().toUpperCase();
+    return (sessionStorage.getItem(CODE_STORAGE_KEY) || '').trim().toUpperCase();
+};
 
 interface Team {
     id: number;
@@ -22,11 +39,32 @@ const Lobby: React.FC = () => {
     const [error, setError] = useState('');
     const [registeredTeam, setRegisteredTeam] = useState<Team | null>(null);
     const [gameState, setGameState] = useState<GameState | null>(null);
+    const [joinCode, setJoinCode] = useState<string>(codeFromUrl);
+    // 'checking' until the server answers, so the join form is never shown
+    // against a link that is about to be refused.
+    const [codeStatus, setCodeStatus] = useState<'checking' | 'valid' | 'invalid'>(
+        codeFromUrl() ? 'checking' : 'invalid'
+    );
+    const [codeInput, setCodeInput] = useState('');
 
     useEffect(() => {
         if (!socket) return;
 
         socket.emit('get_initial_state');
+        if (joinCode) socket.emit('check_join_code', joinCode);
+
+        socket.on('join_code_status', ({ valid }: { valid: boolean }) => {
+            setCodeStatus(valid ? 'valid' : 'invalid');
+            if (valid) sessionStorage.setItem(CODE_STORAGE_KEY, joinCode);
+            else sessionStorage.removeItem(CODE_STORAGE_KEY);
+        });
+
+        // Sent only to this player, when the code they registered with no
+        // longer belongs to the running game.
+        socket.on('invalid_join_code', () => {
+            setCodeStatus('invalid');
+            sessionStorage.removeItem(CODE_STORAGE_KEY);
+        });
 
         socket.on('teams_update', (updatedTeams: Team[]) => {
             setTeams(updatedTeams);
@@ -52,21 +90,74 @@ const Lobby: React.FC = () => {
             setTeamName('');
             setPin('');
             setError('');
+            // A reset ends this game and issues a new link, so the one that
+            // got these players here is now spent. Say so, rather than
+            // dropping them back to a join form that would refuse them.
+            setCodeStatus('invalid');
+            sessionStorage.removeItem(CODE_STORAGE_KEY);
         });
 
         return () => {
+            socket.off('join_code_status');
+            socket.off('invalid_join_code');
             socket.off('teams_update');
             socket.off('game_state_update');
             socket.off('registration_success');
             socket.off('error_message');
             socket.off('game_reset');
         };
-    }, [socket]);
+    }, [socket, joinCode]);
 
     const handleJoin = () => {
         if (!socket) return;
-        socket.emit('register_team', { name: teamName, pin });
+        socket.emit('register_team', { name: teamName, pin, code: joinCode });
     };
+
+    const applyTypedCode = () => {
+        const code = readJoinCode(codeInput);
+        if (!code) return;
+        setJoinCode(code);
+        setCodeStatus('checking');
+        if (socket) socket.emit('check_join_code', code);
+    };
+
+    // No usable link yet. Everything below this point assumes one, so the
+    // gate comes before the game screens rather than being woven through them.
+    if (codeStatus !== 'valid' && !registeredTeam) {
+        return (
+            <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-6 font-sans">
+                <div className="bg-gray-800 p-8 rounded-xl border border-gray-700 w-full max-w-md shadow-lg">
+                    <h1 className="text-2xl font-bold mb-2 text-center bg-gradient-to-r from-blue-400 to-purple-600 bg-clip-text text-transparent">
+                        RMX Business Simulation
+                    </h1>
+                    {codeStatus === 'checking' ? (
+                        <p className="text-center text-gray-400 mt-6 animate-pulse">Checking your game link…</p>
+                    ) : (
+                        <>
+                            <p className="text-gray-300 text-sm mt-6 mb-4">
+                                {joinCode
+                                    ? 'This game link is no longer valid — the game it belonged to has ended. Ask your controller for the current link.'
+                                    : 'Open the link your controller shared with you, or enter the game code below.'}
+                            </p>
+                            <input
+                                className="w-full bg-gray-700 border border-gray-600 rounded p-3 text-white tracking-widest uppercase focus:ring-2 focus:ring-blue-500 outline-none"
+                                placeholder="Game code, or paste the link"
+                                value={codeInput}
+                                onChange={e => setCodeInput(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') applyTypedCode(); }}
+                            />
+                            <button
+                                onClick={applyTypedCode}
+                                className="w-full mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded transition-all"
+                            >
+                                Continue
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+        );
+    }
 
     // Strict Flow: Team Dashboard only opens if registered AND (Quarter Start OR later phase)
     // If PREROLL, show specific message
